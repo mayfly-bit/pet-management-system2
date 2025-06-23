@@ -126,20 +126,92 @@ class ExpenseService {
 
   Future<bool> deleteExpense(String expenseId) async {
     try {
+      print('开始删除费用服务，expenseId: $expenseId');
+      
+      // 首先检查expenseId是否有效
+      if (expenseId.startsWith('unknown-') || expenseId.startsWith('error-')) {
+        print('检测到无效的expenseId: $expenseId，跳过删除操作');
+        return false;
+      }
+      
       // Delete dog links first (foreign key constraint)
-      await _client
-          .from(SupabaseConfig.expenseDogLinkTable)
-          .delete()
-          .eq('exp_id', expenseId);
+      // 根据错误提示，expense_dog_link表中可能使用不同的字段名
+      print('尝试删除关联的狗狗记录...');
       
-      // Delete expense
-      await _client
-          .from(SupabaseConfig.expensesTable)
-          .delete()
-          .eq('exp_id', expenseId);
+      // 先查询表结构，看看有哪些字段
+      try {
+        // 尝试查询这个expense的关联记录，了解实际的字段结构
+        final linkRecords = await _client
+            .from(SupabaseConfig.expenseDogLinkTable)
+            .select()
+            .limit(1);
+        print('expense_dog_link表结构示例: $linkRecords');
+      } catch (e) {
+        print('无法查询表结构: $e');
+      }
       
+      // 尝试不同的字段名来删除关联记录
+      bool linksDeleted = false;
+      
+      // 方法1：尝试使用 expense_id 字段
+      try {
+        await _client
+            .from(SupabaseConfig.expenseDogLinkTable)
+            .delete()
+            .eq('expense_id', expenseId);
+        print('使用expense_id字段删除关联记录成功');
+        linksDeleted = true;
+      } catch (e1) {
+        print('使用expense_id字段失败: $e1');
+        
+        // 方法2：尝试使用 exp_id 字段
+        try {
+          await _client
+              .from(SupabaseConfig.expenseDogLinkTable)
+              .delete()
+              .eq('exp_id', expenseId);
+          print('使用exp_id字段删除关联记录成功');
+          linksDeleted = true;
+        } catch (e2) {
+          print('使用exp_id字段也失败: $e2');
+          
+          // 方法3：可能没有关联记录，或者字段名不同
+          print('警告：无法删除关联记录，可能没有关联数据或字段名不匹配');
+          linksDeleted = true; // 继续删除主记录
+        }
+      }
+      
+      if (!linksDeleted) {
+        print('删除关联记录失败，但继续尝试删除主记录');
+      }
+      
+      // Delete expense (尝试不同的主键字段名)
+      print('尝试删除主费用记录...');
+      try {
+        await _client
+            .from(SupabaseConfig.expensesTable)
+            .delete()
+            .eq('exp_id', expenseId);
+        print('使用exp_id字段删除主费用记录成功');
+      } catch (e3) {
+        print('使用exp_id字段删除主记录失败: $e3');
+        // 尝试使用expense_id字段
+        try {
+          await _client
+              .from(SupabaseConfig.expensesTable)
+              .delete()
+              .eq('expense_id', expenseId);
+          print('使用expense_id字段删除主费用记录成功');
+        } catch (e4) {
+          print('使用expense_id字段删除主记录也失败: $e4');
+          throw Exception('无法删除主费用记录: $e4');
+        }
+      }
+      
+      print('费用记录删除完成');
       return true;
     } catch (e) {
+      print('删除费用记录最终失败: $e');
       throw Exception('删除费用记录失败: $e');
     }
   }

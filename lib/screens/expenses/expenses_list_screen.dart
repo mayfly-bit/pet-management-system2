@@ -428,6 +428,31 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
                     color: Colors.red,
                   ),
                 ),
+                
+                // Delete button
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'delete') {
+                      _showDeleteConfirmDialog(expense);
+                    }
+                  },
+                  itemBuilder: (BuildContext context) => [
+                    const PopupMenuItem<String>(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete, color: Colors.red),
+                          SizedBox(width: 8),
+                          Text('删除'),
+                        ],
+                      ),
+                    ),
+                  ],
+                  child: Icon(
+                    Icons.more_vert,
+                    color: theme.colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
               ],
             ),
             
@@ -561,5 +586,91 @@ class _ExpensesListScreenState extends State<ExpensesListScreen> {
         );
       },
     );
+  }
+
+  void _showDeleteConfirmDialog(Expense expense) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('确认删除'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('您确定要删除这条费用记录吗？'),
+              const SizedBox(height: 8),
+              Text(
+                '类别: ${expense.category?.name ?? '未分类'}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              Text(
+                '金额: ¥${expense.amount.toStringAsFixed(2)}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              Text(
+                '日期: ${expense.date.toString().split(' ')[0]}',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              if (expense.note?.isNotEmpty == true)
+                Text(
+                  '备注: ${expense.note}',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _deleteExpense(expense);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteExpense(Expense expense) async {
+    try {
+      final success = await context.read<ExpenseProvider>().deleteExpense(expense.expId);
+      
+      if (mounted) {
+        if (success) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('费用记录已删除'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('删除失败，请重试'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('删除失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

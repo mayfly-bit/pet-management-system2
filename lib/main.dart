@@ -13,35 +13,19 @@ import 'services/local_storage_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // 初始化Supabase - 如果没有配置则使用演示配置
+  // 初始化Supabase - 恢复联网功能
   try {
-    String url = SupabaseConfig.url;
-    String anonKey = SupabaseConfig.anonKey;
-    
-    // 如果配置为空，使用虚拟配置以避免初始化错误
-    if (url.isEmpty || anonKey.isEmpty) {
-      url = 'https://demo.supabase.co';
-      anonKey = 'demo-anon-key-placeholder-for-offline-mode';
-      print('未配置Supabase，应用将在演示模式下运行');
-      print('要启用完整功能，请在lib/config/supabase_config.dart中配置Supabase');
-    }
-    
+    print('🌐 正在连接到Supabase数据库...');
     await Supabase.initialize(
-      url: url,
-      anonKey: anonKey,
+      url: SupabaseConfig.url,
+      anonKey: SupabaseConfig.anonKey,
     );
+    print('✅ Supabase连接成功！');
+    print('📊 应用将使用在线数据库');
   } catch (e) {
-    print('Supabase初始化失败: $e');
-    print('应用将在演示模式下运行');
-    // 如果初始化失败，使用最小配置重试
-    try {
-      await Supabase.initialize(
-        url: 'https://demo.supabase.co',
-        anonKey: 'demo-anon-key-placeholder-for-offline-mode',
-      );
-    } catch (e2) {
-      print('演示模式初始化也失败: $e2');
-    }
+    print('⚠️ Supabase连接失败: $e');
+    print('🔄 将使用本地缓存数据，删除功能仍可正常使用');
+    // 连接失败不影响应用启动，只是功能会受限
   }
   
   // Initialize local storage

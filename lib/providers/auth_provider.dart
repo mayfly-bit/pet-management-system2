@@ -79,11 +79,10 @@ class AuthProvider extends ChangeNotifier {
 
   bool _isInDemoMode() {
     try {
-      // 检查Supabase配置是否为演示配置
-      return SupabaseConfig.url.isEmpty || 
-             SupabaseConfig.url.contains('demo.supabase.co');
+      // 检查Supabase是否已配置
+      return SupabaseConfig.isOfflineMode;
     } catch (e) {
-      return true; // 如果无法访问，假设是演示模式
+      return true; // 如果无法访问，假设是离线模式
     }
   }
 

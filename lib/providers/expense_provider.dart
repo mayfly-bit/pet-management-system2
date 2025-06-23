@@ -3,6 +3,7 @@ import '../models/expense.dart';
 import '../services/expense_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/auth_service.dart';
+import '../config/supabase_config.dart';
 
 class ExpenseProvider extends ChangeNotifier {
   final ExpenseService _expenseService = ExpenseService();
@@ -148,19 +149,85 @@ class ExpenseProvider extends ChangeNotifier {
       }
       
       // Load from server
-      final categories = await _expenseService.getCategories();
-      _categories = categories;
-      
-      // Cache the data
-      await LocalStorageService.cacheCategories(categories);
+      try {
+        final categories = await _expenseService.getCategories();
+        
+        // If no categories exist, initialize default categories
+        if (categories.isEmpty) {
+          if (!_isInDemoMode()) {
+            // Only initialize on server if not in demo mode
+            await _expenseService.initializeDefaultCategories();
+            final defaultCategories = await _expenseService.getCategories();
+            _categories = defaultCategories;
+          } else {
+            // In demo mode, create default categories locally
+            _categories = _getDefaultCategories();
+          }
+        } else {
+          _categories = categories;
+        }
+        
+        // Cache the data
+        await LocalStorageService.cacheCategories(_categories);
+      } catch (e) {
+        print('服务器加载类别失败: $e');
+        // Fallback to cached or default categories
+        final cachedCategories = await LocalStorageService.getCachedCategories();
+        if (cachedCategories.isNotEmpty) {
+          _categories = cachedCategories;
+        } else {
+          // Use default categories as last resort
+          _categories = _getDefaultCategories();
+          await LocalStorageService.cacheCategories(_categories);
+        }
+      }
       
     } catch (e) {
       _errorMessage = '加载费用类别失败: $e';
       print('加载类别失败: $e');
+      // Last resort: use default categories
+      _categories = _getDefaultCategories();
+      await LocalStorageService.cacheCategories(_categories);
     } finally {
       _isLoading = false;
       notifyListeners(); // 只在最后调用一次
     }
+  }
+
+  // Get default categories for demo mode or fallback
+  List<ExpenseCategory> _getDefaultCategories() {
+    return [
+      ExpenseCategory(
+        catId: 'default-cat-001',
+        name: '食物费用',
+        isShared: true,
+      ),
+      ExpenseCategory(
+        catId: 'default-cat-002',
+        name: '医疗费用',
+        isShared: true,
+      ),
+      ExpenseCategory(
+        catId: 'default-cat-003',
+        name: '美容费用',
+        isShared: true,
+      ),
+      ExpenseCategory(
+        catId: 'default-cat-004',
+        name: '用品费用',
+        isShared: true,
+      ),
+      ExpenseCategory(
+        catId: 'default-cat-005',
+        name: '训练费用',
+        isShared: true,
+      ),
+      ExpenseCategory(
+        catId: 'default-cat-006',
+        name: '其他费用',
+        isShared: true,
+      ),
+    ];
   }
   
   // 新增方法：同时加载费用和类别，避免竞争条件
@@ -175,60 +242,85 @@ class ExpenseProvider extends ChangeNotifier {
     String? errorMsg;
     
     try {
-      // 并行执行所有数据加载操作
-      await Future.wait([
-        // 加载费用
-        () async {
-          try {
-            if (!forceRefresh) {
-              final cachedExpenses = await LocalStorageService.getCachedExpenses();
-              if (cachedExpenses.isNotEmpty) {
+      if (_isInDemoMode()) {
+        // 演示模式：只使用本地缓存
+        newExpenses = await LocalStorageService.getCachedExpenses();
+        newCategories = await LocalStorageService.getCachedCategories();
+      } else {
+        // 联网模式：优先从服务器加载
+        try {
+          // 并行执行所有数据加载操作
+          await Future.wait([
+            // 加载费用
+            () async {
+              try {
+                final expenses = await _expenseService.getAllExpenses();
+                newExpenses = expenses;
+                await LocalStorageService.cacheExpenses(expenses);
+              } catch (e) {
+                print('从服务器加载费用失败: $e');
+                // 如果服务器加载失败，使用缓存数据
+                final cachedExpenses = await LocalStorageService.getCachedExpenses();
                 newExpenses = cachedExpenses;
+                errorMsg ??= '无法连接服务器，使用本地数据';
               }
-            }
+            }(),
             
-            final expenses = await _expenseService.getAllExpenses();
-            newExpenses = expenses;
-            await LocalStorageService.cacheExpenses(expenses);
-          } catch (e) {
-            print('加载费用失败: $e');
-            errorMsg ??= '加载费用失败: $e';
-          }
-        }(),
-        
-        // 加载类别
-        () async {
-          try {
-            if (!forceRefresh) {
-              final cachedCategories = await LocalStorageService.getCachedCategories();
-              if (cachedCategories.isNotEmpty) {
+            // 加载类别
+            () async {
+              try {
+                final categories = await _expenseService.getCategories();
+                newCategories = categories;
+                await LocalStorageService.cacheCategories(categories);
+              } catch (e) {
+                print('从服务器加载类别失败: $e');
+                // 如果服务器加载失败，使用缓存数据
+                final cachedCategories = await LocalStorageService.getCachedCategories();
                 newCategories = cachedCategories;
+                errorMsg ??= '无法连接服务器，使用本地数据';
               }
-            }
-            
-            final categories = await _expenseService.getCategories();
-            newCategories = categories;
-            await LocalStorageService.cacheCategories(categories);
-          } catch (e) {
-            print('加载类别失败: $e');
-            errorMsg ??= '加载类别失败: $e';
-          }
-        }(),
-      ]);
+            }(),
+          ]);
+        } catch (e) {
+          print('服务器连接失败，使用本地缓存: $e');
+          newExpenses = await LocalStorageService.getCachedExpenses();
+          newCategories = await LocalStorageService.getCachedCategories();
+          errorMsg = '网络连接失败，显示本地数据';
+        }
+      }
       
       // 一次性更新所有数据
       _expenses = newExpenses;
       _categories = newCategories;
       
       if (errorMsg != null) {
-        _errorMessage = errorMsg;
+        print('警告: $errorMsg');
+        // 不设置为错误，因为有本地数据可以使用
       }
       
     } catch (e) {
+      print('加载数据失败: $e');
       _errorMessage = '加载数据失败: $e';
     } finally {
       _isLoading = false;
       notifyListeners(); // 只在最后调用一次通知
+    }
+  }
+
+  // 检查是否在演示模式（离线模式）
+  bool _isInDemoMode() {
+    try {
+      // 首先检查Supabase配置
+      if (!SupabaseConfig.isConfigured) {
+        return true; // 未配置Supabase，强制离线模式
+      }
+      
+      // 检查当前用户是否是演示用户
+      final currentUserId = AuthService.instance.currentUserId;
+      return currentUserId == '00000000-0000-0000-0000-000000000001' ||
+             currentUserId == '00000000-0000-0000-0000-000000000002';
+    } catch (e) {
+      return true; // 默认离线模式
     }
   }
 
@@ -247,17 +339,34 @@ class ExpenseProvider extends ChangeNotifier {
     _setLoadingWithoutNotify(true);
     _clearErrorWithoutNotify();
     
-          try {
-        final userId = AuthService.instance.currentUserId;
-        expenseData['created_by'] = userId;
-        final expense = Expense.fromMap(expenseData);
-      final newExpense = await _expenseService.createExpense(expense);
-      if (newExpense != null) {
-        _expenses.add(newExpense);
+    try {
+      final userId = AuthService.instance.currentUserId;
+      expenseData['created_by'] = userId;
+      final expense = Expense.fromMap(expenseData);
+      
+      if (_isInDemoMode()) {
+        // 演示模式：只保存到本地
+        _expenses.add(expense);
         await LocalStorageService.cacheExpenses(_expenses);
         return true;
+      } else {
+        // 联网模式：先尝试保存到服务器
+        try {
+          final newExpense = await _expenseService.createExpense(expense);
+          if (newExpense != null) {
+            _expenses.add(newExpense);
+            await LocalStorageService.cacheExpenses(_expenses);
+            return true;
+          }
+          return false;
+        } catch (e) {
+          print('服务器添加失败，保存到本地: $e');
+          // 服务器保存失败，保存到本地作为备用
+          _expenses.add(expense);
+          await LocalStorageService.cacheExpenses(_expenses);
+          return true;
+        }
       }
-      return false;
     } catch (e) {
       _errorMessage = '添加费用记录失败: $e';
       return false;
@@ -300,15 +409,74 @@ class ExpenseProvider extends ChangeNotifier {
     _clearErrorWithoutNotify();
     
     try {
-      final success = await _expenseService.deleteExpense(expenseId);
-      if (success) {
+      bool success = false;
+      String? errorMessage;
+      
+      print('开始删除费用，ID: $expenseId');
+      print('当前演示模式状态: ${_isInDemoMode()}');
+      
+      if (_isInDemoMode()) {
+        // 演示模式：只删除本地数据
+        print('执行演示模式删除...');
+        final initialCount = _expenses.length;
+        print('删除前本地费用数量: $initialCount');
+        
         _expenses.removeWhere((expense) => expense.expId == expenseId);
-        await LocalStorageService.cacheExpenses(_expenses);
-        return true;
+        success = _expenses.length < initialCount; // 确认真的删除了
+        
+        print('删除后本地费用数量: ${_expenses.length}');
+        print('删除成功: $success');
+        
+        if (success) {
+          await LocalStorageService.cacheExpenses(_expenses);
+          print('演示模式：本地删除成功，已更新缓存');
+        } else {
+          errorMessage = '未找到要删除的记录ID: $expenseId';
+          print('错误：$errorMessage');
+        }
+      } else {
+        // 联网模式：必须先成功删除服务器数据
+        print('执行联网模式删除...');
+        try {
+          print('调用服务器删除API...');
+          success = await _expenseService.deleteExpense(expenseId);
+          print('服务器删除结果: $success');
+          
+          if (success) {
+            // 服务器删除成功，删除本地数据
+            final initialCount = _expenses.length;
+            print('删除前本地费用数量: $initialCount');
+            
+            _expenses.removeWhere((expense) => expense.expId == expenseId);
+            await LocalStorageService.cacheExpenses(_expenses);
+            
+            print('删除后本地费用数量: ${_expenses.length}');
+            print('联网模式：服务器和本地删除都成功');
+          } else {
+            errorMessage = '服务器删除返回失败';
+            print('错误：$errorMessage');
+            success = false;
+          }
+        } catch (e) {
+          print('服务器删除异常: $e');
+          errorMessage = '网络错误：$e';
+          success = false;
+          // 不删除本地数据，因为服务器删除失败
+        }
       }
-      return false;
+      
+      if (!success && errorMessage != null) {
+        _errorMessage = errorMessage;
+        print('最终删除失败，错误信息: $errorMessage');
+      } else {
+        print('最终删除结果: $success');
+      }
+      
+      return success;
     } catch (e) {
-      _errorMessage = '删除费用记录失败: $e';
+      final message = '删除费用记录失败: $e';
+      _errorMessage = message;
+      print('删除过程异常: $message');
       return false;
     } finally {
       _isLoading = false;
